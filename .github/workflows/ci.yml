@@ -1,0 +1,131 @@
+name: CI
+
+# The wheels the control host runs. `roles/csi_reduce` in monad-knowledge
+# downloads the artifact of the exact commit checked out at
+# `repos/csi-reduce` on the operator's workstation, verifies SHA256SUMS and
+# COMMIT, smoke-tests the wheel on ccx33, and only then installs it, the same
+# contract `roles/csid` keeps with csid's `pi release (aarch64)`. Nothing on a
+# host compiles Rust.
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  fmt:
+    name: format
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets --features python -- -D warnings
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test
+
+  # One abi3 wheel per platform. x86_64 manylinux_2_28 is the control host
+  # (Ubuntu 24.04, glibc 2.39); aarch64 covers a Pi or an arm runner; macOS
+  # arm64 is the workstation, where the parity study runs.
+  wheels:
+    name: wheel (${{ matrix.name }})
+    needs: [fmt, clippy, test]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            runner: ubuntu-24.04
+            target: x86_64
+            manylinux: "2_28"
+          - name: linux-aarch64
+            runner: ubuntu-24.04-arm
+            target: aarch64
+            manylinux: "2_28"
+          - name: macos-arm64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+            manylinux: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          args: --release --out dist
+      # The wheel must import and report its versions before it is published.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Smoke-test the wheel
+        run: |
+          python -m pip install --no-deps --target smoke dist/*.whl
+          PYTHONPATH=smoke python -c "import csi_reduce as m; print(m.__version__, m.version(), m.reduction_schema())"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.name }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  # The deployable bundle: every wheel of this commit, with a manifest the
+  # Ansible role verifies before anything reaches the host.
+  bundle:
+    name: bundle
+    needs: wheels
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: dist
+          merge-multiple: true
+      - name: Manifest
+        run: |
+          cd dist
+          sha256sum *.whl > SHA256SUMS
+          echo "${GITHUB_SHA}" > COMMIT
+          grep -m1 '^version' ../Cargo.toml | cut -d'"' -f2 > VERSION
+          grep -m1 'REDUCER_VERSION' ../src/lib.rs | cut -d'"' -f2 > REDUCER_VERSION
+          cat SHA256SUMS COMMIT VERSION REDUCER_VERSION
+      - uses: actions/upload-artifact@v4
+        with:
+          name: csi-reduce-wheels-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}" --title "${GITHUB_REF_NAME}" --notes-file CHANGELOG.md

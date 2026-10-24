@@ -1,0 +1,37 @@
+[package]
+name = "csi-reduce"
+description = "Native reducer for the monad measurement lake: one CSIQ segment to packets, blocks, motion, census and window rows."
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "GPL-2.0-only"
+authors = ["Jakub Dubec <jakub.dubec@stuba.sk>"]
+repository = "https://github.com/monad-wireless/csi-reduce"
+
+[lib]
+name = "csi_reduce"
+# `cdylib` for the Python extension, `rlib` for the Rust tests and benches.
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+# The PyO3 module. Off for `cargo test`, which links no interpreter.
+python = ["dep:pyo3"]
+
+[dependencies]
+# The format reader, pinned to one csid commit. The reducer's meaning depends on
+# what the reader hands it, so a reader change is a deliberate bump here.
+csiq = { git = "https://github.com/Sibyx/csid", rev = "635ec86b6c732a06f4fc9f9a0963f161608a5b52" }
+indexmap = "2"
+zstd = "0.13"
+pyo3 = { version = "0.23", features = ["abi3-py310"], optional = true }
+
+[dev-dependencies]
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+# A panic in an extension module must raise in Python, not kill the decoder.
+panic = "unwind"

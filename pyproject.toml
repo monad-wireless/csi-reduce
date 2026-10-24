@@ -1,0 +1,24 @@
+[project]
+name = "csi-reduce"
+description = "Native reducer for the monad measurement lake (IP-164 Phase 5)."
+requires-python = ">=3.10"
+license = { text = "GPL-2.0-only" }
+authors = [{ name = "Jakub Dubec", email = "jakub.dubec@stuba.sk" }]
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering",
+    "Programming Language :: Rust",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/monad-wireless/csi-reduce"
+
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[tool.maturin]
+module-name = "csi_reduce"
+# abi3 from 3.10: one wheel per platform covers every supported Python.
+features = ["python", "pyo3/extension-module"]
