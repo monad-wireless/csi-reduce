@@ -29,7 +29,7 @@ pub mod source;
 mod python;
 
 /// The semantic version of the reduction this crate computes. See the module doc.
-pub const REDUCER_VERSION: &str = "1";
+pub const REDUCER_VERSION: &str = "2";
 
 /// The `monad_knowledge.lake.schema.REDUCTION_SCHEMA` this crate ports.
 pub const REDUCTION_SCHEMA: i64 = 7;

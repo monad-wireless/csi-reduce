@@ -33,6 +33,54 @@ pub struct Frame {
     pub chain_amp_rms: Option<Vec<f64>>,
     /// True: repaired; false: tested and in order; None: not tested.
     pub tone_swapped: Option<bool>,
+    /// Inter-antenna coherence across tones of chains 0 and 1 (`ingest._coherence`):
+    /// Pearson of the two chains' dB amplitudes, and the complex correlation magnitude.
+    pub coh_amp: Option<f64>,
+    pub coh_cplx: Option<f64>,
+}
+
+/// `ingest._coherence` for one record: chains 0 and 1 of *cplx* starting at *base*,
+/// as interleaved `(re, im)` float32 pairs, chain-major blocks of *ntone*.
+///
+/// float64 throughout, magnitudes floored at 1 before the dB like the tone-swap
+/// guard. Sums are numpy's pairwise order; the complex sum is taken as its real
+/// and imaginary parts, which numpy pairs differently, so this agrees to ulps.
+fn coherence(cplx: &[f32], base: usize, ntone: usize) -> (Option<f64>, Option<f64>) {
+    let mut da = Vec::with_capacity(ntone);
+    let mut db = Vec::with_capacity(ntone);
+    let mut pa = Vec::with_capacity(ntone);
+    let mut pb = Vec::with_capacity(ntone);
+    let mut cr = Vec::with_capacity(ntone);
+    let mut ci = Vec::with_capacity(ntone);
+    for t in 0..ntone {
+        let (ar, ai) = (cplx[base + 2 * t] as f64, cplx[base + 2 * t + 1] as f64);
+        let (br, bi) = (
+            cplx[base + 2 * (ntone + t)] as f64,
+            cplx[base + 2 * (ntone + t) + 1] as f64,
+        );
+        let ma = ar.hypot(ai);
+        let mb = br.hypot(bi);
+        da.push(20.0 * ma.max(1.0).log10());
+        db.push(20.0 * mb.max(1.0).log10());
+        pa.push(ma * ma);
+        pb.push(mb * mb);
+        // a · conj(b)
+        cr.push(ar * br + ai * bi);
+        ci.push(ai * br - ar * bi);
+    }
+    let ma = npcompat::mean(&da);
+    let mb = npcompat::mean(&db);
+    let xc: Vec<f64> = da.iter().map(|v| v - ma).collect();
+    let yc: Vec<f64> = db.iter().map(|v| v - mb).collect();
+    let xx: Vec<f64> = xc.iter().map(|v| v * v).collect();
+    let yy: Vec<f64> = yc.iter().map(|v| v * v).collect();
+    let xy: Vec<f64> = xc.iter().zip(&yc).map(|(x, y)| x * y).collect();
+    let den = (npcompat::sum(&xx) * npcompat::sum(&yy)).sqrt();
+    let amp = (den > 0.0).then(|| npcompat::sum(&xy) / den);
+    let den2 = (npcompat::sum(&pa) * npcompat::sum(&pb)).sqrt();
+    let cross = npcompat::sum(&cr).hypot(npcompat::sum(&ci));
+    let cpl = (den2 > 0.0).then(|| cross / den2);
+    (amp.filter(|v| v.is_finite()), cpl.filter(|v| v.is_finite()))
 }
 
 /// The label the Python reader gives a modulation.
@@ -285,6 +333,7 @@ pub fn frame_features(records: &[CsiRecord], n_groups: usize) -> Vec<Frame> {
                 .iter()
                 .map(|&(lo, hi)| npcompat::nanmedian(&amp_db[lo..hi]))
                 .collect();
+            let (coh_amp, coh_cplx) = coherence(&cplx, base, ntone);
             frames[i] = Some(Frame {
                 amp_db: Some(amp_db),
                 phase: Some(phase),
@@ -293,6 +342,8 @@ pub fn frame_features(records: &[CsiRecord], n_groups: usize) -> Vec<Frame> {
                 group_medians,
                 chain_amp_rms: Some(rms[k].clone()),
                 tone_swapped: swapped[k],
+                coh_amp,
+                coh_cplx,
             });
         }
     }
@@ -314,6 +365,40 @@ mod tests {
         );
         assert_eq!(tone_groups(10, 4), vec![(0, 3), (3, 6), (6, 8), (8, 10)]);
         assert_eq!(tone_groups(2, 4), vec![(0, 1), (1, 2)]);
+    }
+
+    #[test]
+    fn coherence_is_one_for_equal_chains_and_ignores_swap_and_offset() {
+        let ntone = 52;
+        // chain 0 then chain 1, interleaved (re, im) float32.
+        let chain: Vec<f32> = (0..ntone)
+            .flat_map(|t| {
+                [
+                    (t as f32 * 37.0).sin() * 300.0,
+                    (t as f32 * 11.0).cos() * 200.0,
+                ]
+            })
+            .collect();
+        let other: Vec<f32> = (0..ntone)
+            .flat_map(|t| {
+                [
+                    (t as f32 * 5.0).cos() * 250.0,
+                    (t as f32 * 3.0).sin() * 150.0,
+                ]
+            })
+            .collect();
+        let same = [chain.clone(), chain.clone()].concat();
+        let (a, c) = coherence(&same, 0, ntone);
+        assert!((a.unwrap() - 1.0).abs() < 1e-12 && (c.unwrap() - 1.0).abs() < 1e-12);
+
+        let base = coherence(&[chain.clone(), other.clone()].concat(), 0, ntone);
+        let swapped = coherence(&[other.clone(), chain.clone()].concat(), 0, ntone);
+        let negated: Vec<f32> = other.iter().map(|v| -v).collect();
+        let offset = coherence(&[chain.clone(), negated].concat(), 0, ntone);
+        for got in [swapped, offset] {
+            assert!((got.0.unwrap() - base.0.unwrap()).abs() < 1e-12);
+            assert!((got.1.unwrap() - base.1.unwrap()).abs() < 1e-12);
+        }
     }
 
     #[test]

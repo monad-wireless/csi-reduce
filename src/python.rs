@@ -130,6 +130,14 @@ fn result_dict<'py>(py: Python<'py>, r: &Reduction) -> PyResult<Bound<'py, PyDic
         d.set_item("inj_rssi_sd", m.inj_rssi_sd)?;
         d.set_item("inj_dab_mean", m.inj_dab_mean)?;
         d.set_item("inj_dab_sd", m.inj_dab_sd)?;
+        d.set_item("inj_coh_amp_mean", m.inj_coh_amp_mean)?;
+        d.set_item("inj_coh_amp_sd", m.inj_coh_amp_sd)?;
+        d.set_item("inj_coh_cplx_mean", m.inj_coh_cplx_mean)?;
+        d.set_item("inj_coh_cplx_sd", m.inj_coh_cplx_sd)?;
+        d.set_item("inj_rssi_a_sd", m.inj_rssi_a_sd)?;
+        d.set_item("inj_rssi_b_sd", m.inj_rssi_b_sd)?;
+        d.set_item("inj_lv_a", m.inj_lv_a)?;
+        d.set_item("inj_lv_b", m.inj_lv_b)?;
         motion.append(d)?;
     }
     let census = PyList::empty(py);

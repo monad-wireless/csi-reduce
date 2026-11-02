@@ -152,6 +152,31 @@ pub struct MotionOut {
     pub inj_rssi_sd: Option<f64>,
     pub inj_dab_mean: Option<f64>,
     pub inj_dab_sd: Option<f64>,
+    /// Inter-antenna coherence, REDUCER_VERSION 2 (`ingest._coherence`).
+    pub inj_coh_amp_mean: Option<f64>,
+    pub inj_coh_amp_sd: Option<f64>,
+    pub inj_coh_cplx_mean: Option<f64>,
+    pub inj_coh_cplx_sd: Option<f64>,
+    /// Each chain's RSSI spread and distinct whole-dB levels, -127 left out
+    /// (REDUCER_VERSION 2).
+    pub inj_rssi_a_sd: Option<f64>,
+    pub inj_rssi_b_sd: Option<f64>,
+    pub inj_lv_a: Option<usize>,
+    pub inj_lv_b: Option<usize>,
+}
+
+/// `csiq::record::RSSI_NO_MEASUREMENT`: the chain reported nothing.
+const RSSI_NO_MEASUREMENT: i16 = -127;
+
+/// `len(set(values))` under the injector floor (`ingest` emit of `inj_lv_*`).
+fn levels_of(enough: bool, values: &[f64]) -> Option<usize> {
+    if !enough || values.is_empty() {
+        return None;
+    }
+    let mut v: Vec<i64> = values.iter().map(|&x| x as i64).collect();
+    v.sort_unstable();
+    v.dedup();
+    Some(v.len())
 }
 
 /// One census entry, in first-seen class order.
@@ -222,6 +247,10 @@ struct MotionAcc {
     inj_n_phase: usize,
     inj_rssi: Vec<f64>,
     inj_dab: Vec<f64>,
+    inj_coh_amp: Vec<f64>,
+    inj_coh_cplx: Vec<f64>,
+    inj_rssi_a: Vec<f64>,
+    inj_rssi_b: Vec<f64>,
     inj_n_steps: usize,
     inj_n_swaps: usize,
     inj_n_offsets: usize,
@@ -522,6 +551,14 @@ impl State {
                 inj_rssi_sd: sd_of(inj_enough, &row.inj_rssi),
                 inj_dab_mean: mean_of(inj_enough, &row.inj_dab),
                 inj_dab_sd: sd_of(inj_enough, &row.inj_dab),
+                inj_coh_amp_mean: mean_of(inj_enough, &row.inj_coh_amp),
+                inj_coh_amp_sd: sd_of(inj_enough, &row.inj_coh_amp),
+                inj_coh_cplx_mean: mean_of(inj_enough, &row.inj_coh_cplx),
+                inj_coh_cplx_sd: sd_of(inj_enough, &row.inj_coh_cplx),
+                inj_rssi_a_sd: sd_of(inj_enough, &row.inj_rssi_a),
+                inj_rssi_b_sd: sd_of(inj_enough, &row.inj_rssi_b),
+                inj_lv_a: levels_of(inj_enough, &row.inj_rssi_a),
+                inj_lv_b: levels_of(inj_enough, &row.inj_rssi_b),
             });
         }
     }
@@ -721,6 +758,7 @@ pub fn reduce_segment(
 
             let amp_scalar = fr.amp_scalar;
             let phase_scalar = fr.phase_scalar;
+            let (coh_amp, coh_cplx) = (fr.coh_amp, fr.coh_cplx);
             let mac = &rec.src_mac;
             let injector = frame::is_injector(mac);
             let nrx = rec.nrx as usize;
@@ -869,6 +907,18 @@ pub fn reduce_segment(
                     }
                     if let (Some(a), Some(b)) = (rssi_a, rssi_b) {
                         row.inj_dab.push((a - b) as f64);
+                    }
+                    if let Some(a) = rssi_a.filter(|&a| a != RSSI_NO_MEASUREMENT) {
+                        row.inj_rssi_a.push(a as f64);
+                    }
+                    if let Some(b) = rssi_b.filter(|&b| b != RSSI_NO_MEASUREMENT) {
+                        row.inj_rssi_b.push(b as f64);
+                    }
+                    if let Some(v) = coh_amp {
+                        row.inj_coh_amp.push(v);
+                    }
+                    if let Some(v) = coh_cplx {
+                        row.inj_coh_cplx.push(v);
                     }
                     if let (Some(ph), Some(am)) = (phase_c, amp_c) {
                         row.inj_c2_sum += (2.0 * ph).cos();

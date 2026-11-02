@@ -58,8 +58,10 @@ publishes a GitHub Release.
 
 monad-knowledge's `roles/csi_reduce` installs the bundle of the commit checked
 out at `repos/csi-reduce` on the control host, at `/opt/csi-reduce/<commit>`
-with `/opt/csi-reduce/current` pointing at it. Installing does not switch the
-lake; `[lake].reducer = "native"` does.
+with `/opt/csi-reduce/current` pointing at it. The lake decodes with this
+reducer only, and only when `[lake].reducer = "native-<REDUCER_VERSION>"`
+names the installed build's version. A missing or mismatched build fails the
+pass.
 
 ## Licence
 
